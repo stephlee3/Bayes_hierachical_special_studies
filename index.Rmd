@@ -3,6 +3,7 @@ title: "Testing Pages"
 author: "Runzhe Li"
 date: "September 24, 2019"
 output: html_document
+permalinK: https://stephlee3.github.io/Bayes_hierachical_special_studies
 ---
 
 ```{r setup, include=FALSE}
