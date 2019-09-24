@@ -1,1 +1,2 @@
 # Bayes_hierachical_special_studies
+This is the case study for PANSS score analysis from advanced special topics course. We develop a Bayesian hierachical model to investigate the patient response trajectory among different treatment groups. The code is implemented using `MCMCglmm` package.  
