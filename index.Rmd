@@ -1,31 +1,114 @@
 ---
-title: "Testing Pages"
-author: "Runzhe Li"
+title: "A Bayesian hierarchical model for PANSS score trajectory prediction"
+author: "Erjia Cui, Runzhe Li, Zebin Wang, Jiyang Wen"
 date: "September 24, 2019"
-output: html_document
-permalinK: https://stephlee3.github.io/Bayes_hierachical_special_studies
+output:
+  html_document:
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+# Exploratory Data Analysis
+## Totpan scores with smoothing curve by different treatment groups
+```{r,message=F,warning=F}
+library(tidyverse)
+library(gridExtra)
+load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## data wrangling
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+dat0 = panss1[,c("id","treatmnt","time","pospan","negpan","genpan","totpan")]
+p1 = ggplot(dat0,aes(x= time,y=totpan,col=treatmnt))+
+  geom_smooth(method = "loess")+
+  theme(legend.position="bottom")
+p2 = ggplot(dat0,aes(x= time,y=pospan,col=treatmnt))+
+  geom_smooth(method = "loess")
+p3 = ggplot(dat0,aes(x= time,y=negpan,col=treatmnt))+
+  geom_smooth(method = "loess")
+p4 = ggplot(dat0,aes(x= time,y=genpan,col=treatmnt))+
+  geom_smooth(method = "loess")
+#grid.arrange(p1,p2,p3,p4,ncol=2,nrow=2)
+p1
 
-```{r cars}
-summary(cars)
+Trt  = dat0$treatmnt
+Trt[which(Trt!= 'PLACEBO'& Trt!= 'HALOPERIDOL')]= 'RISPERIDONE'
+dat1 = dat0
+dat1$treatmnt = Trt
+dat2 = subset(dat1,treatmnt== 'HALOPERIDOL')
+
+ggplot(dat0,aes(x= time,y=totpan,group=id,col=treatmnt))+
+  geom_line()+facet_grid(. ~ treatmnt)+
+  theme(legend.position="none")
+
+
+
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## Trajectory plots for a specific patient
+```{r}
+traj_plot = function(patient_id){
+  patient.dat = subset(panss1,id==patient_id)
+  pan.dat = patient.dat[,c(5,6,7,8,10)]
+  pan.gather = gather(pan.dat,type,score,-time)
+  ggplot(pan.gather,aes(x= time,y=score,col=type))+
+    geom_line()+
+    geom_vline(xintercept = 0,lty=2)+
+    ggtitle(patient_id)
+}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+p = vector(mode = "list", length = 9)
+for(i in 1:9){
+  p[[i]] = traj_plot(i)
+}
+grid.arrange(grobs = p,ncol=3,nrow=3)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# MCMCglmm model fitting
+```{r,warning=F,message=F}
+library(MCMCglmm)
+library(splines)
+set.seed(2019)
+V.prior = diag(c(1,0.0001))
+prior = list(G = list(G1 =list(V= V.prior,n=1)))
+
+reg = MCMCglmm(fixed = totpan ~
+                 ns(time, knots = quantile(time, probs = c(.33,.66)),
+                    Boundary.knots = c(xmin = min(time), xmax = max(time))) +
+                 ns(time, knots = quantile(time,probs = c(.33,.66)),
+                    Boundary.knots = c(xmin = min(time), xmax = max(time))):treatmnt,
+               random = ~us(1 + time):id, data = dat0,
+               family = "gaussian", pr = TRUE, pl = TRUE, verbose = FALSE,
+               prior = prior)
+predicted= predict(reg,marginal = NULL)
+
+dat0.pred = cbind(dat0,predicted)
+
+traj_pred_plot = function(patient_id){
+  patient.dat = subset(dat0.pred,id==patient_id)
+  pan.dat = patient.dat[,c("time","totpan","predicted")]
+  pan.gather = gather(pan.dat,type,score,-time)
+  p = ggplot(pan.gather,aes(x= time,y=score,col=type))+
+    geom_line()+
+    geom_vline(xintercept = 0,lty=2)+
+    ggtitle(patient_id)
+}
+
+plt = vector(mode = "list", length = 9)
+for(i in 1:9){
+  plt[[i]] = traj_pred_plot(i)
+}
+grid.arrange(grobs = plt,ncol=3,nrow=3)
+```
+
