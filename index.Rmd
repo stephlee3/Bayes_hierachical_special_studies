@@ -20,9 +20,9 @@ knitr::opts_chunk$set(echo = TRUE)
 # Exploratory Data Analysis
 ## Totpan scores with smoothing curve by different treatment groups
 ```{r,message=F,warning=F}
-library(tidyverse)
-library(gridExtra)
-load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
+#library(tidyverse)
+#library(gridExtra)
+#load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
 
 ## data wrangling
 
@@ -39,6 +39,7 @@ p4 = ggplot(dat0,aes(x= time,y=genpan,col=treatmnt))+
 #grid.arrange(p1,p2,p3,p4,ncol=2,nrow=2)
 p1
 
+## Alternatively, we may combine ALL RISPERIDONE into one obs.
 Trt  = dat0$treatmnt
 Trt[which(Trt!= 'PLACEBO'& Trt!= 'HALOPERIDOL')]= 'RISPERIDONE'
 dat1 = dat0
@@ -54,9 +55,73 @@ ggplot(dat0,aes(x= time,y=totpan,group=id,col=treatmnt))+
 
 ```
 
+```{r}
+library(ggplot2)
+library(MCMCglmm)
+load("~/panss1.rdata")
+d <- panss1
+head(d)
+
+d <- as.data.frame(cbind(d$inv, d$id, d$period, d$pospan, d$negpan, d$genpan, d$totpan, d$treatmnt, as.numeric(d$time), d$age, d$sex, d$race))
+colnames(d) <- c("inv", "id", "period", "pospan", "negpan", "genpan", "totpan", "treatment", "time", "age", "sex", "race")
+## I do not know why; but they are just factors in my example
+d$time <- as.numeric(paste(d$time))
+d$pospan <- as.numeric(paste(d$pospan))
+d$negpan <- as.numeric(paste(d$negpan))
+d$genpan <- as.numeric(paste(d$genpan))
+d$totpan <- as.numeric(paste(d$totpan))
+```
+
+Try totpain at first and see what is going to happen
+
+```{r}
+plot_tot <- ggplot(data = d, aes(x = jitter(time, factor = 1.5),
+                                 y = jitter(totpan, factor = 1.5),
+                                 group = treatment,
+                                 alpha = 0.001,
+                                 color = treatment)) +
+  geom_point(size = 0.1) +
+  geom_smooth()
+
+plot_tot
+
+```
+
+From the plot we see that Risperidone 6mg group has the largest difference with the placebo. Let's try this by contrasting the spaghetti for the PLACEBO and RISPERIDONE_6MG.
+
+```{r}
+d_redu <- d[d$treatment == "PLACEBO"|d$treatment == "RISPERIDONE_6MG",]
+
+plot_tot_redu <- ggplot(data = d_redu, aes(x = jitter(time, factor = 1.5),
+                                 y = jitter(totpan, factor = 1.5),
+                                 group = treatment,
+                                 alpha = 0.001,
+                                 color = treatment)) +
+  geom_point(size = 0.1) +
+  geom_smooth()
+
+plot_tot_redu
+```
+
+```{r}
+## Still, showing the trajectories may be too messy
+plot_traj <- ggplot(data = d_redu,
+                    mapping = aes(x = jitter(time, factor = 1.5),
+                                  y = jitter(totpan, factor = 1.5),
+                                  group = id,
+                                  alpha = 0.001,
+                                  color = treatment)) +
+  geom_line()
+
+plot_traj
+```
+
+We may see that red lines are generally beyond blue lines. However, the pattern is not that obvious and additional work shall be done.
 
 ## Trajectory plots for a specific patient
+## We can only do traj for individuals; otherwise the spaghetti-shaped plot can be dreadful.
 ```{r}
+## Strongly recommend using observations with longer observations; otherwise there may not be enough information
 traj_plot = function(patient_id){
   patient.dat = subset(panss1,id==patient_id)
   pan.dat = patient.dat[,c(5,6,7,8,10)]
@@ -135,6 +200,50 @@ for(i in 1:9){
 }
 grid.arrange(grobs = plt,ncol=3,nrow=3)
 ```
+To make things easier, we may also only discuss the PLACEBO and RISPERIDONE_6MG group.
+
+```{r}
+## The naive case for PLACEBO vs RISPERIDONE_6MG
+set.seed(123)
+
+library(MCMCglmm)
+library(splines)
+V.prior = diag(c(1, .0001))
+prior2b = list(G = list(G1 =list(V = V.prior, n = 1)))
+
+reg_mcmc <- MCMCglmm(fixed = totpan ~ sex + race + ns(time, knots = quantile(time, probs = c(.33, .66)), Boundary.knots = c(xmin = min(time), xmax = max(time))) + ns(time, knots = quantile(time, probs = c(.33, .66)), Boundary.knots = c(xmin = min(time), xmax = max(time))):treatment,
+                     random = ~us(1 + time):id,
+                     prior = prior2b,
+                     data = d,
+                     family = "gaussian",
+                     pr = TRUE, pl = TRUE, verbose = FALSE)
+
+```
+
+Does it make sense to fit the model with all data but only process the data with in two groups chosen from the 6?
+
+```{r}
+set.seed(123)
+
+d$vnbr <- panss1$vnbr
+
+prior_m <- list(R = list(V = diag(3), nu = .002), G = list(G1 = list(V = diag(3), nu = .002)))
+
+reg <- MCMCglmm(cbind(pospan, negpan, genpan) ~ 
+           ns(time, knots = quantile(time, probs = c(.33, .66)), Boundary.knots = c(xmin = min(time), xmax = max(time))) 
+         + ns(time, knots = quantile(time, probs = c(.33, .66)), Boundary.knots = c(xmin = min(time), xmax = max(time))):treatment,
+         random = ~us(1 + time):id,
+         rcov = ~us(1):vnbr,
+         pl = TRUE,
+         pr = TRUE, 
+         family = rep("gaussian", 3),
+         prior = prior_m,
+         nitt = 5000,
+         burnin = 1000,
+         data = d)
+```
+
+
 
 
 ## Multivariate response
