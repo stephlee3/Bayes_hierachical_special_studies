@@ -26,7 +26,7 @@ load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
 
 ## data wrangling
 
-dat0 = panss1[,c("id","treatmnt","time","pospan","negpan","genpan","totpan")]
+dat0 = panss1[,c("id","treatmnt","time","pospan","negpan","genpan","totpan","age","sex","race")]
 p1 = ggplot(dat0,aes(x= time,y=totpan,col=treatmnt))+
   geom_smooth(method = "loess")+
   theme(legend.position="bottom")
@@ -76,14 +76,32 @@ grid.arrange(grobs = p,ncol=3,nrow=3)
 
 
 # MCMCglmm model fitting
-```{r,warning=F,message=F}
+## Univariate response 
+### model formulation
+$$ y_{ij} = X_{ij} \beta_0+ s(t_{ij}) \cdot \beta_1 + b_{0i}+ b_{1i} \cdot t_{ij} + \epsilon_{ij}$$
+
+### variance structure
+$$
+\begin{pmatrix}
+  b_{0i}  \\
+  b_{1i}
+ \end{pmatrix}
+ \sim
+\begin{pmatrix}
+  \sigma_{11}^2 & \sigma_{12}^2 \\
+  \sigma_{12}^2 & \sigma_{22}^2
+ \end{pmatrix}$$
+
+
+```{r,warning=F,message=F,eval=F}
 library(MCMCglmm)
 library(splines)
 set.seed(2019)
 V.prior = diag(c(1,0.0001))
-prior = list(G = list(G1 =list(V= V.prior,n=1)))
+prior = list(G = list(G1 =list(V= V.prior,nu=0.002)))
 
-reg = MCMCglmm(fixed = totpan ~
+reg = MCMCglmm(fixed = totpan ~ 
+                 # age + sex+ race +
                  ns(time, knots = quantile(time, probs = c(.33,.66)),
                     Boundary.knots = c(xmin = min(time), xmax = max(time))) +
                  ns(time, knots = quantile(time,probs = c(.33,.66)),
@@ -91,6 +109,12 @@ reg = MCMCglmm(fixed = totpan ~
                random = ~us(1 + time):id, data = dat0,
                family = "gaussian", pr = TRUE, pl = TRUE, verbose = FALSE,
                prior = prior)
+saveRDS(reg, "./reg.rds")
+```
+
+```{r,warning=F,message=F}
+reg= readRDS("reg.rds")
+
 predicted= predict(reg,marginal = NULL)
 
 dat0.pred = cbind(dat0,predicted)
@@ -110,5 +134,64 @@ for(i in 1:9){
   plt[[i]] = traj_pred_plot(i)
 }
 grid.arrange(grobs = plt,ncol=3,nrow=3)
+```
+
+
+## Multivariate response
+```{r,warning=F,message=F,eval=F}
+dat0 = panss1[,c("id","treatmnt","time","pospan","negpan","genpan","totpan")]
+dat0.trait = gather(dat0,key = trait,value = y,-c(id,treatmnt,time))
+
+
+
+## multi
+V.prior <- diag(c(4,.001)); nu <- 0.002
+prior.multi <- list(R = list(V= diag(4), nu = 0.002),
+              G = list(G1 = list(V= diag(8), nu = 0.002)))
+
+# fit MCMCglmm random intercept and random slope model
+set.seed(2019)
+reg.multi <- MCMCglmm(fixed = cbind(pospan,negpan,genpan,totpan) ~
+                   trait:ns(time, knots = quantile(time, probs = c(.33,.66)),
+                      Boundary.knots = c(xmin = min(time), xmax = max(time))) +
+                   trait:(ns(time, knots = quantile(time,probs = c(.33,.66)),
+                      Boundary.knots = c(xmin = min(time), xmax = max(time))):treatmnt),
+                 random = ~us(trait + trait:time):id, 
+                 rcov = ~us(trait):units,
+                 data = dat0,
+                 family = rep("gaussian",4), pr = TRUE, pl = TRUE, verbose = FALSE,
+                 prior = prior.multi)
+saveRDS(reg.multi, "./reg_multi.rds")
+```
+
+
+```{r,warning=F,message=F}
+reg.multi= readRDS("reg_multi.rds")
+dat0 = panss1[,c("id","treatmnt","time","pospan","negpan","genpan","totpan")]
+dat0.trait = gather(dat0,key = trait,value = y,-c(id,treatmnt,time))
+
+# prediction
+dat0.totpan = subset(dat0.trait,trait == "totpan")
+pred.multi = predict(reg.multi,marginal = NULL)
+pred.uni = predict(reg,marginal = NULL)
+dat.comb = cbind(dat0.trait,pred.multi) %>%
+  subset(trait=="totpan") %>%
+  cbind(pred.uni)
+  
+traj_multi_pred_plot = function(patient_id){
+  patient.dat = subset(dat.comb,id==patient_id)
+  pan.dat = patient.dat[,c(3,5,6,7)]
+  pan.gather = gather(pan.dat,type,score,-time)
+  p = ggplot(pan.gather,aes(x= time,y=score,col=type))+
+    geom_line()+
+    geom_vline(xintercept = 0,lty=2)+
+    ggtitle(patient_id)
+}
+plt = vector(mode = "list", length = 9)
+for(i in 1:9){
+  plt[[i]] = traj_multi_pred_plot(i)
+}
+grid.arrange(grobs = plt,ncol=3,nrow=3)
+
 ```
 
