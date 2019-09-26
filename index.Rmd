@@ -22,7 +22,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r,message=F,warning=F}
 library(tidyverse)
 library(gridExtra)
-load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
+#load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
+load("~/panss1.rdata")
 
 ## data wrangling
 
@@ -54,6 +55,22 @@ ggplot(dat0,aes(x= time,y=totpan,group=id,col=treatmnt))+
 
 ```
 
+We can simply notice that nearly all the groups have messy trajectories. It might be better if we take two groups separately and compare them individaully.
+
+The curves above gives us the intuition that comparing the group of Placebo and group using one single medicine will be enough to answer the first question.
+
+There is a way that also makes sense: to treat all kinds of risperidone together as a whole type of class, and compare that class to others.
+
+
+```{r}
+p1 = ggplot(dat1,aes(x= time,y=totpan,col=treatmnt))+
+  geom_smooth(method = "loess")+
+  theme(legend.position="bottom")
+
+p1
+```
+
+Apart from generating total trajectories, we have got codes for trajectories for individuals. On every given individual, we have prediction on them and shall see how our prediction is compared with the real trajectories.
 
 ## Trajectory plots for a specific patient
 ```{r}
@@ -92,6 +109,8 @@ $$
   \sigma_{12}^2 & \sigma_{22}^2
  \end{pmatrix}$$
 
+
+The first thing that we have done is to use univariate MCMCglmm model to fit Y = totalpan against fixed effects of time and random intercept + possible random slope.
 
 ```{r,warning=F,message=F,eval=F}
 library(MCMCglmm)
@@ -194,4 +213,130 @@ for(i in 1:9){
 grid.arrange(grobs = plt,ncol=3,nrow=3)
 
 ```
+
+The result has told us that using either the univariate or multivariate model will not cause a major difference.
+
+Let us set up a comparison between Group Placebo against Group with Risperidone 6mg treatment.
+
+First, we try univariate scheme on totpan, which combines the information of pospan, negpan and genpan.
+
+```{r,warning=F,message=F,eval=F}
+dat3 <- dat0[dat0$treatmnt == "PLACEBO" | dat0$treatmnt == "RISPERIDONE_6MG",]
+
+library(MCMCglmm)
+library(splines)
+set.seed(2019)
+V.prior = diag(c(1,0.0001))
+prior = list(G = list(G1 =list(V= V.prior,nu=0.002)))
+
+# Still, we choose to give the "Only-Intercept Model" a chance.
+
+reg = MCMCglmm(fixed = totpan ~ 
+                 # age + sex+ race +
+                 ns(time, knots = quantile(time, probs = c(.33,.66)),
+                    Boundary.knots = c(xmin = min(time), xmax = max(time))) +
+                 ns(time, knots = quantile(time,probs = c(.33,.66)),
+                    Boundary.knots = c(xmin = min(time), xmax = max(time))):treatmnt,
+               random = ~us(1 + time):id, data = dat3,
+               family = "gaussian", pr = TRUE, pl = TRUE, verbose = FALSE,
+               prior = prior)
+saveRDS(reg, "./reg_2group.rds")
+```
+
+Read what we have got from this model, we may see that
+
+```{r}
+reg_2group = readRDS("reg_2group.rds")
+dat3$predicted <- predict(reg_2group, marginal = NULL)
+
+plot1 <- ggplot(dat3, aes(time, predicted, group = id)) + geom_line(aes(color = treatmnt)) + ggtitle("Response Trajectories of individuals on Univariate Model")
+
+plot1
+```
+
+The combed spaghetti plot seems to be still too messy. In order to handle this, we use some other plots instead.
+
+```{r}
+knots.internal = quantile(dat3$time, probs = c(.33, .66))
+knots.boundary = c(min(dat3$time), max(dat3$time))
+
+ti = knots.boundary[1]:knots.boundary[2]
+X.new = data.frame(time = rep(ti,2), treatmnt = rep(c("PLACEBO", "RISPERIDONE_6MG"), rep(length(ti), 2)))
+
+X.m.new = model.matrix(data = X.new,
+                       ~ ns(time, knots = knots.internal, Boundary.knots = knots.boundary) +
+                         ns(time, knots = knots.internal, Boundary.knots = knots.boundary):treatmnt)
+
+fit.fe1 = data.frame(pred = t(reg_2group$Sol[,1:ncol(X.m.new)] %*% t(X.m.new)), time = X.new[,1], treatmnt = X.new)
+fit.fe.long = gather(data = fit.fe1, key = rep, value = pred, pred.1:pred.1000)
+
+fit.fe.long$time1 = fit.fe.long$time + ifelse(fit.fe.long$treatmnt.treatmnt == "PLACEBO", -0.2, 0.2)
+
+plot2 = ggplot(data = fit.fe.long, aes(x = time1, y = pred, colour = treatmnt.treatmnt, alpha - 0.001)) +
+  geom_jitter(pch = ".") +
+  xlab("Time") +
+  ylab("Mean Response") +
+  ggtitle("Simulated Posterior Distributions by Group")
+
+plot2
+```
+
+Furthermore, we may use 95% CI to show such difference more clearly
+
+```{r}
+X.m.diff = X.m.new[X.new[, "treatmnt"] == "RISPERIDONE_6MG", 5:7]
+diff = data.frame(pred = t(reg_2group$Sol[,5:7] %*% t(X.m.diff)), time = X.new[X.new[,"treatmnt"]=="RISPERIDONE_6MG", "time"])
+diff.long <- gather(data = diff, key = rep, value = diff, pred.1:pred.1000)
+junk <- diff.long %>% group_by(time) %>% summarize(muhat = mean(diff), ciu = quantile(diff, prob = 0.975), cil = quantile(diff, prob = 0.025), muhat = quantile(diff, prob = .5))
+
+plot3 = ggplot(data = diff.long, aes(x = time, y = diff)) +
+  geom_jitter(pch = ".") +
+  geom_hline(yintercept = 0) +
+  geom_line(data = junk, aes(x = time, y = muhat, col = "red")) +
+  geom_line(data = junk, aes(x = time, y = cil, col = "blue")) +
+  geom_line(data = junk, aes(x = time, y = ciu, col = "blue")) +
+  ggtitle("Posterior for Trt Effecct with 95% b_CI") +
+  xlab("Time") +
+  ylab("Mean Response Diff") +
+  theme(legend.position = "none")
+
+plot3
+```
+
+There IS evidence from the data showing a difference on totpan between "PLACEBO" and "RESPERIDONE_6MG".
+
+We can do the same Univariate Scheme on negpan, pospan and genpan.
+
+For Multivariate cases:
+
+```{r,warning=F,message=F,eval=F}
+dat3.trait = gather(dat3, key = trait, value = y,-c(id,treatmnt,time))
+
+
+
+## multi
+V.prior <- diag(c(4,.001)); nu <- 0.002
+prior.multi <- list(R = list(V= diag(4), nu = 0.002),
+              G = list(G1 = list(V= diag(8), nu = 0.002)))
+
+# fit MCMCglmm random intercept and random slope model
+set.seed(2019)
+reg.multi <- MCMCglmm(fixed = cbind(pospan,negpan,genpan,totpan) ~
+                   trait:ns(time, knots = quantile(time, probs = c(.33,.66)),
+                      Boundary.knots = c(xmin = min(time), xmax = max(time))) +
+                   trait:(ns(time, knots = quantile(time,probs = c(.33,.66)),
+                      Boundary.knots = c(xmin = min(time), xmax = max(time))):treatmnt),
+                 random = ~us(trait + trait:time):id, 
+                 rcov = ~us(trait):units,
+                 data = dat3,
+                 family = rep("gaussian",4), pr = TRUE, pl = TRUE, verbose = FALSE,
+                 prior = prior.multi)
+saveRDS(reg.multi, "./reg_2group_multi.rds")
+```
+
+Generally we can do the things above and give a CI or some other things that will work for multivariate model.
+
+```{r}
+```
+
 
