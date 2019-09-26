@@ -23,7 +23,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(gridExtra)
 #load("D:/2019-2020/1st term/special topics/Zeger/Assignment2/panss1.rdata")
-load("~/panss1.rdata")
+load("panss1.rdata")
 
 ## data wrangling
 
@@ -214,6 +214,8 @@ grid.arrange(grobs = plt,ncol=3,nrow=3)
 
 ```
 
+# Interpretation
+
 The result has told us that using either the univariate or multivariate model will not cause a major difference.
 
 Let us set up a comparison between Group Placebo against Group with Risperidone 6mg treatment.
@@ -246,6 +248,7 @@ saveRDS(reg, "./reg_2group.rds")
 Read what we have got from this model, we may see that
 
 ```{r}
+dat3 <- dat0[dat0$treatmnt == "PLACEBO" | dat0$treatmnt == "RISPERIDONE_6MG",]
 reg_2group = readRDS("reg_2group.rds")
 dat3$predicted <- predict(reg_2group, marginal = NULL)
 
@@ -257,6 +260,7 @@ plot1
 The combed spaghetti plot seems to be still too messy. In order to handle this, we use some other plots instead.
 
 ```{r}
+library(splines)
 knots.internal = quantile(dat3$time, probs = c(.33, .66))
 knots.boundary = c(min(dat3$time), max(dat3$time))
 
